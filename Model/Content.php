@@ -9,18 +9,18 @@ declare(strict_types=1);
 namespace MSP\CmsImportExport\Model;
 
 use Magento\Cms\Api\BlockRepositoryInterface;
-use Magento\Store\Api\StoreRepositoryInterface;
-use Magento\Framework\Json\DecoderInterface;
-use Magento\Framework\Json\EncoderInterface;
-use Magento\Cms\Api\Data\PageInterface as CmsPageInterface;
 use Magento\Cms\Api\Data\BlockInterface as CmsBlockInterface;
+use Magento\Cms\Api\Data\PageInterface as CmsPageInterface;
 use Magento\Cms\Model\BlockFactory as CmsBlockFactory;
 use Magento\Cms\Model\PageFactory as CmsPageFactory;
-use Magento\Cms\Model\ResourceModel\Page\CollectionFactory as CmsPageCollectionFactory;
 use Magento\Cms\Model\ResourceModel\Block\CollectionFactory as CmsBlockCollectionFactory;
-use Magento\Framework\Stdlib\DateTime\DateTime;
-use MSP\CmsImportExport\Api\ContentInterface;
+use Magento\Cms\Model\ResourceModel\Page\CollectionFactory as CmsPageCollectionFactory;
 use Magento\Framework\Filesystem\Io\File;
+use Magento\Framework\Json\DecoderInterface;
+use Magento\Framework\Json\EncoderInterface;
+use Magento\Framework\Stdlib\DateTime\DateTime;
+use Magento\Store\Api\StoreRepositoryInterface;
+use MSP\CmsImportExport\Api\ContentInterface;
 
 class Content implements ContentInterface
 {
@@ -172,6 +172,7 @@ class Content implements ContentInterface
             ],
             'stores' => $this->getStoreCodes($pageInterface->getStoreId()),
             'media' => $media,
+            'block_references' => $this->saveBlockByIdent($pageInterface->getContent()),
         ];
 
         return $payload;
@@ -184,11 +185,18 @@ class Content implements ContentInterface
      */
     public function getMediaAttachments($content): array
     {
+        $result = [];
+
         if (preg_match_all('/\{\{media.+?url\s*=\s*("|&quot;)(.+?)("|&quot;).*?\}\}/', $content, $matches)) {
-            return $matches[2];
+            $result += $matches[2];
         }
 
-        return [];
+        //Check for image URLs without quotes from PageBuilder
+        if (preg_match_all('/{{media.+?url\s*=\s*(?!"|&quot;)(.+?)}}/', $content, $matches)) {
+            $result += $matches[1];
+        }
+
+        return $result;
     }
 
     /**
@@ -261,6 +269,7 @@ class Content implements ContentInterface
             ],
             'stores' => $this->getStoreCodes($blockInterface->getStoreId()),
             'media' => $media,
+            'block_references' => $this->saveBlockByIdent($blockInterface->getContent()),
         ];
 
         return $payload;
@@ -277,6 +286,59 @@ class Content implements ContentInterface
         $keys[] = $blockInterface->getIdentifier();
 
         return implode(':', $keys);
+    }
+
+    /**
+     * @param string $content
+     *
+     * @return array
+     * @throws \Magento\Framework\Exception\LocalizedException
+     */
+    protected function saveBlockByIdent(string $content)
+    {
+        $references = [];
+
+        if (preg_match_all('/{{widget.+?block_id\s*=\s*("|&quot;)(\d+?)("|&quot;).*?}}/', $content, $matches)) {
+            foreach ($matches[2] as $blockId) {
+                $block                = $this->blockRepositoryInterface->getById($blockId);
+                $references[$blockId] = $block->getIdentifier();
+            }
+        }
+
+        return $references;
+    }
+
+    /**
+     * @param array  $cmsData
+     * @param string $contentKey
+     *
+     * @return array[]
+     * @throws NoSuchEntityException
+     * @throws \Magento\Framework\Exception\LocalizedException
+     */
+    protected function loadBlocksByIdent(array $cmsData, string $contentKey)
+    {
+        if (isset($cmsData['block_references'])) {
+            $pairs = [];
+            foreach ($cmsData['block_references'] as $blockId => $blockIdent) {
+                $block           = $this->blockRepositoryInterface->getById($blockIdent);
+                $pairs[$blockId] = $block->getId();
+            }
+
+            $cmsData['cms'][$contentKey] = preg_replace_callback(
+                '/({{widget.+?block_id\s*=\s*)("|&quot;)(\d+?)("|&quot;)(.*?}})/',
+                function ($matches) use ($pairs) {
+                    if (isset($pairs[$matches[3]])) {
+                        return $matches[1] . $matches[2] . $pairs[$matches[3]] . $matches[4] . $matches[5];
+                    }
+
+                    return $matches[0];
+                },
+                $cmsData['cms'][$contentKey]
+            );
+        }
+
+        return $cmsData;
     }
 
     /**
@@ -389,6 +451,9 @@ class Content implements ContentInterface
      */
     public function importPageFromArray(array $pageData): bool
     {
+        // Process block identifiers
+        $pageData = $this->loadBlocksByIdent($pageData, CmsPageInterface::IDENTIFIER);
+
         // Will not use repositories to save pages because it does not allow stores selection
 
         $storeIds = $this->getStoreIdsByCodes($this->_mapStores($pageData['stores']));
@@ -491,6 +556,9 @@ class Content implements ContentInterface
      */
     public function importBlockFromArray(array $blockData): bool
     {
+        // Process block identifiers
+        $blockData = $this->loadBlocksByIdent($blockData, CmsBlockInterface::IDENTIFIER);
+
         // Will not use repositories to save blocks because it does not allow stores selection
 
         $storeIds = $this->getStoreIdsByCodes($this->_mapStores($blockData['stores']));
