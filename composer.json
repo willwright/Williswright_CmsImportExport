@@ -1,5 +1,5 @@
 {
-    "name": "msp/cmsimportexport",
+    "name": "williswright/cmsimportexport",
     "description": "",
     "require": {
         "msp/common": "*",
