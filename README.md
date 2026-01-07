@@ -20,11 +20,13 @@ Add directly to `composer.json`
 
 Add from CLI
 
-`composer config williswright vcs https://github.com/willwright/Williswright_CmsImportExport`
+```
+composer config repositories.williswright vcs https://github.com/willwright/Williswright_CmsImportExport
+```
 
 Require the module.
 ```
-composer require msp/cmsimportexport
+composer require williswright/cmsimportexport
 ```
 
 ## How to export contents
