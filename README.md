@@ -5,8 +5,27 @@ MSP_CmsImportExport is a module for Magento 2 allowing users to **import/export 
 MSP_CmsImportExport supports **multistore** and **wysiwyg images**.
 
 ## Installation
+Register the github repository as a module source.
 
-    composer require msp/cmsimportexport
+Add directly to `composer.json`
+
+```
+"repositories": {
+    "williswright": {
+        "type": "vcs",
+        "url": "https://github.com/willwright/Williswright_CmsImportExport"
+    }
+}
+```
+
+Add from CLI
+
+`composer config williswright vcs https://github.com/willwright/Williswright_CmsImportExport`
+
+Require the module.
+```
+composer require msp/cmsimportexport
+```
 
 ## How to export contents
 
