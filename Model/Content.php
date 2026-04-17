@@ -91,6 +91,23 @@ class Content implements ContentInterface
 
         $contentArray = array_merge_recursive($pagesArray, $blocksArray);
 
+        // array_merge_recursive turns scalar-array keys into nested arrays when both sides
+        // have the same key; flatten the media list back to a deduplicated 1-D array.
+        $mediaFiles = [];
+        if (!empty($contentArray['media'])) {
+            foreach ((array)$contentArray['media'] as $item) {
+                if (is_array($item)) {
+                    foreach ($item as $path) {
+                        $mediaFiles[] = $path;
+                    }
+                } else {
+                    $mediaFiles[] = $item;
+                }
+            }
+        }
+        $mediaFiles = array_values(array_unique(array_filter($mediaFiles)));
+        $contentArray['media'] = $mediaFiles;
+
         $jsonPayload = $this->encoderInterface->encode($contentArray);
 
         $exportPath = $this->filesystem->getExportPath();
@@ -105,7 +122,7 @@ class Content implements ContentInterface
         $zipArchive->addFromString(self::JSON_FILENAME, $jsonPayload);
 
         // Add media files
-        foreach ($contentArray['media'] as $mediaFile) {
+        foreach ($mediaFiles as $mediaFile) {
             $absMediaPath = $this->filesystem->getMediaPath($mediaFile);
             if ($this->file->fileExists($absMediaPath, true)) {
                 $zipArchive->addFile($absMediaPath, self::MEDIA_ARCHIVE_PATH . '/' . $mediaFile);
@@ -187,16 +204,48 @@ class Content implements ContentInterface
     {
         $result = [];
 
+        // Match {{media url="..."}} and {{media url=&quot;...&quot;}} directives
         if (preg_match_all('/\{\{media.+?url\s*=\s*("|&quot;)(.+?)("|&quot;).*?\}\}/', $content, $matches)) {
-            $result += $matches[2];
+            $result = array_merge($result, $matches[2]);
         }
 
-        //Check for image URLs without quotes from PageBuilder
-        if (preg_match_all('/{{media.+?url\s*=\s*(?!"|&quot;)(.+?)}}/', $content, $matches)) {
-            $result += $matches[1];
+        // Match {{media url=...}} without quotes (PageBuilder)
+        if (preg_match_all('/\{\{media.+?url\s*=\s*(?!"|&quot;)([^\s}]+)/', $content, $matches)) {
+            $result = array_merge($result, $matches[1]);
         }
 
-        return $result;
+        // Match direct /media/... paths in src, href, data-src, and url() attributes
+        // Covers: <img src="{{media url=...}}">, <img src="/media/...">, background images, etc.
+        if (preg_match_all(
+            '/(?:src|href|data-src|data-background)\s*=\s*["\']([^"\']*\/media\/([^"\'?#\s]+))["\']/',
+            $content,
+            $matches
+        )) {
+            foreach ($matches[2] as $mediaRelPath) {
+                $result[] = $mediaRelPath;
+            }
+        }
+
+        // Match url(...) in style attributes (inline background-image etc.)
+        if (preg_match_all(
+            '/url\s*\(\s*["\']?[^"\'()]*\/media\/([^"\'()?#\s]+)["\']?\s*\)/',
+            $content,
+            $matches
+        )) {
+            $result = array_merge($result, $matches[1]);
+        }
+
+        // Match PageBuilder data attributes that embed full URLs with /media/ segment
+        if (preg_match_all(
+            '/data-[a-z-]+\s*=\s*["\'][^"\']*\/media\/([^"\'?#\s]+)["\']/',
+            $content,
+            $matches
+        )) {
+            $result = array_merge($result, $matches[1]);
+        }
+
+        // Deduplicate and re-index
+        return array_values(array_unique($result));
     }
 
     /**
